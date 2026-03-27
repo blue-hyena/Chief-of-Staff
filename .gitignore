@@ -1,0 +1,13 @@
+.next
+node_modules
+.env
+.env.local
+.env.production
+.vercel
+coverage
+*.log
+csiworkspace-*.json
+tsconfig.tsbuildinfo
+.google-oauth-tokens.json
+
+client_secret_*.json

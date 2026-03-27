@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google OAuth Setup"
+  short_description: "Set up Google OAuth clients"
+  default_prompt: "Use $google-auth-platform-oauth-setup to configure Google OAuth for a local app."

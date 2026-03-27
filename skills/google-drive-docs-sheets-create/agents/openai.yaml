@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drive Docs Sheets Create"
+  short_description: "Create and debug Docs and Sheets"
+  default_prompt: "Use $google-drive-docs-sheets-create to create Google Docs and Sheets and debug write failures."

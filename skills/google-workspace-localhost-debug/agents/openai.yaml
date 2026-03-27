@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workspace Localhost Debug"
+  short_description: "Debug local Google auth flow"
+  default_prompt: "Use $google-workspace-localhost-debug to debug localhost routing, curl checks, and Google auth flow issues."

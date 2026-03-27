@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drive Sharing Debug"
+  short_description: "Fix Drive sharing and access bugs"
+  default_prompt: "Use $google-drive-sharing-and-permissions to debug Google Drive sharing, ownership, and permission issues."

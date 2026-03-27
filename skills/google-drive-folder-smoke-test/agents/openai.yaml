@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drive Folder Smoke Test"
+  short_description: "Check folder access quickly"
+  default_prompt: "Use $google-drive-folder-smoke-test to verify Google Drive folder visibility and basic access."

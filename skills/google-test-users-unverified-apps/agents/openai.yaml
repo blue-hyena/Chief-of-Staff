@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Test Users"
+  short_description: "Fix unverified app access"
+  default_prompt: "Use $google-test-users-unverified-apps to fix Google OAuth test-user and unverified-app blocks."

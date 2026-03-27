@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workspace Project Context"
+  short_description: "Use this repo Google context"
+  default_prompt: "Use $google-workspace-project-context to pull the Google-specific routes, env vars, and troubleshooting context from this repo."

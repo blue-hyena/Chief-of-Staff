@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Auth Choice"
+  short_description: "Choose OAuth vs service accounts"
+  default_prompt: "Use $google-service-account-vs-user-oauth to decide between Google user OAuth, service accounts, Shared Drives, and delegation."

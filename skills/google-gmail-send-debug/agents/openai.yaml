@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gmail Send Debug"
+  short_description: "Debug Gmail API send failures"
+  default_prompt: "Use $google-gmail-send-debug to debug Gmail API send failures, sender identity, and scope issues."

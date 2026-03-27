@@ -1,0 +1,4 @@
+interface:
+  display_name: "Calendar Ingest Debug"
+  short_description: "Debug Calendar event reads"
+  default_prompt: "Use $google-calendar-ingest-debug to debug Google Calendar reads, time windows, and missing events."

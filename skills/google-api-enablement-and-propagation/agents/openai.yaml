@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google API Enablement"
+  short_description: "Enable Workspace APIs cleanly"
+  default_prompt: "Use $google-api-enablement-and-propagation to enable Google Workspace APIs and handle propagation delays."

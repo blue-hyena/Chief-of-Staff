@@ -1,0 +1,4 @@
+interface:
+  display_name: "Google Local OAuth"
+  short_description: "Run localhost Google OAuth"
+  default_prompt: "Use $google-oauth-localhost-flow to run and debug a localhost Google OAuth flow."

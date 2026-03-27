@@ -1,0 +1,59 @@
+# AI Chief of Staff
+
+Next.js app that generates a morning briefing digest from Google Calendar + Drive context, can optionally use Fireworks for LLM synthesis, and can send the result through Gmail and Telegram.
+
+## What It Does
+
+- Reads the user's primary Google Calendar for a target date
+- Pulls supported context from event attachments and Drive links in event descriptions
+- Builds a structured digest from the collected context using deterministic logic or optional Fireworks synthesis
+- Renders deterministic HTML/text email output
+- Sends the briefing through Gmail using the connected Google user
+- Sends a compact Telegram briefing through a bot to a configured chat
+- Accepts inbound Telegram webhook messages and answers meeting questions
+
+## Setup
+
+1. Copy `.env.example` to `.env.local`
+2. Fill in the Google values
+3. Choose synthesis mode with `BRIEFING_SYNTHESIS_MODE=deterministic` or `fireworks`
+4. If Fireworks is enabled, fill in `FIREWORKS_API_KEY` and optionally override `FIREWORKS_MODEL`
+5. Choose delivery channels with `BRIEFING_DELIVERY_CHANNELS=email`, `telegram`, or `email,telegram`
+6. If Telegram is enabled, fill in `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
+7. If you want inbound Telegram replies, set `TELEGRAM_WEBHOOK_SECRET`
+8. Install dependencies with `npm install`
+9. Start the app with `npm run dev`
+10. Visit `http://localhost:3000/api/auth/google/start` once to connect your Google account
+
+## Endpoints
+
+- `GET /api/health`: simple health response
+- `GET /api/auth/google/start`: begin Google OAuth
+- `GET /api/auth/google/callback`: OAuth callback endpoint
+- `GET /api/auth/google/status`: current auth status
+- `GET /api/cron/morning-briefing`: run the briefing job
+- `POST /api/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>`: receive inbound Telegram updates
+- `GET /api/google/workspace-test?folderId=<folderId>`: inspect a Drive folder
+- `POST /api/google/workspace-test`: create five test docs and one tracker sheet in a folder
+
+The cron endpoint requires either:
+
+- `Authorization: Bearer <CRON_SECRET>`
+- or `x-cron-secret: <CRON_SECRET>`
+
+Optional query params:
+
+- `date=YYYY-MM-DD`: run the job for a specific local date
+- `dryRun=true`: build the briefing but do not send email or Telegram messages
+
+`/api/google/workspace-test` uses the same `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret` protection.
+
+## Notes
+
+- The included `csiworkspace-52b8a0e998e2.json` file is treated as a local secret and is ignored by `.gitignore`.
+- OAuth mode is the recommended default for personal Google accounts.
+- Service account mode is still available for Workspace/domain setups.
+- Fireworks synthesis is optional; when it fails, the app falls back to the deterministic digest.
+- Telegram delivery uses the standard Bot API and a single configured chat ID in v1.
+- Inbound Telegram replies use a webhook path secret; register the webhook after deployment with:
+  `curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<PUBLIC_BASE_URL>/api/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>"`
