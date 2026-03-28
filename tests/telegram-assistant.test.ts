@@ -32,6 +32,23 @@ test("parseTelegramTargetDate supports explicit dates", () => {
   assert.equal(targetDate, "2026-03-31");
 });
 
+test("parseTelegramTargetDate supports month-name and weekday dates", () => {
+  const now = new Date("2026-03-27T15:00:00.000Z");
+
+  assert.equal(
+    parseTelegramTargetDate(
+      "What are my meetings for April 1, 2026?",
+      "Asia/Manila",
+      now,
+    ),
+    "2026-04-01",
+  );
+  assert.equal(
+    parseTelegramTargetDate("What do I have next Wednesday?", "Asia/Manila", now),
+    "2026-04-01",
+  );
+});
+
 test("parseTelegramTargetDate supports tomorrow and defaults to today", () => {
   const now = new Date("2026-03-27T15:00:00.000Z");
 
@@ -102,6 +119,55 @@ test("buildTelegramAssistantReply falls back when Fireworks fails", async () => 
 
     assert.match(reply, /Before the/);
     assert.match(reply, /Key points:/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("buildTelegramAssistantReply answers schedule questions in deterministic mode", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply("What are my meetings for April 1, 2026?", {
+      listEventContextsForDate: async () => [eventContextFixture],
+      now: () => new Date("2026-03-24T21:00:00.000Z"),
+    });
+
+    assert.match(reply, /You have 1 meeting/);
+    assert.match(reply, /Board Prep/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("buildTelegramAssistantReply answers specific meeting attendee questions", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply("Who is in the Board Prep meeting?", {
+      listEventContextsForDate: async () => [eventContextFixture],
+      now: () => new Date("2026-03-24T21:00:00.000Z"),
+    });
+
+    assert.match(reply, /attendees/i);
+    assert.match(reply, /Alex/);
+    assert.match(reply, /Jamie/);
   } finally {
     process.env = originalEnv;
     resetAppConfigForTests();
