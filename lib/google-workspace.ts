@@ -509,3 +509,67 @@ export async function createWorkspaceTestAssets(folderId: string) {
     },
   };
 }
+
+export async function createGoogleDoc(options: {
+  folderId: string;
+  title: string;
+  body: string;
+}) {
+  const { auth, drive } = await getClients();
+  const docs = google.docs({
+    version: "v1",
+    auth,
+  });
+  const createRes = await drive.files.create({
+    requestBody: {
+      name: options.title,
+      mimeType: "application/vnd.google-apps.document",
+      parents: [options.folderId],
+    },
+    fields: "id,name,webViewLink",
+    supportsAllDrives: true,
+  });
+
+  if (!createRes.data.id) {
+    throw new Error(`Drive did not return an ID for ${options.title}.`);
+  }
+
+  await docs.documents.batchUpdate({
+    documentId: createRes.data.id,
+    requestBody: {
+      requests: [
+        {
+          insertText: {
+            location: { index: 1 },
+            text: `${options.title}\n\n${options.body.trim()}\n`,
+          },
+        },
+      ],
+    },
+  });
+
+  return {
+    id: createRes.data.id,
+    title: createRes.data.name ?? options.title,
+    url: createRes.data.webViewLink ?? undefined,
+  };
+}
+
+export async function appendRowsToSheet(options: {
+  spreadsheetId: string;
+  sheetName?: string;
+  rows: string[][];
+}) {
+  const { sheets } = await getClients();
+  const range = `${options.sheetName ?? "Sheet1"}!A1`;
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: options.spreadsheetId,
+    range,
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: options.rows,
+    },
+  });
+}

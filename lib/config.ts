@@ -35,6 +35,10 @@ const EnvSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
+  AGENT_GOOGLE_DOC_FOLDER_ID: z.string().optional(),
+  AGENT_GOOGLE_TRACKER_SPREADSHEET_ID: z.string().optional(),
+  AGENT_PRE_MEETING_WINDOW_MINUTES: z.coerce.number().int().positive().default(60),
+  AGENT_POST_MEETING_LOOKBACK_MINUTES: z.coerce.number().int().positive().default(120),
   MAX_MEETINGS_PER_BRIEFING: z.coerce.number().int().positive().default(8),
   MAX_ATTACHMENTS_PER_EVENT: z.coerce.number().int().positive().default(5),
   MAX_DOCUMENT_CHARS: z.coerce.number().int().positive().default(12000),
@@ -76,6 +80,12 @@ export type AppConfig = {
     chatId: string;
   };
   telegramWebhookSecret?: string;
+  agent: {
+    googleDocFolderId?: string;
+    googleTrackerSpreadsheetId?: string;
+    preMeetingWindowMinutes: number;
+    postMeetingLookbackMinutes: number;
+  };
   fireworks?: {
     apiKey: string;
     model: string;
@@ -315,6 +325,12 @@ export function getAppConfig() {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     telegram,
     telegramWebhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+    agent: {
+      googleDocFolderId: env.AGENT_GOOGLE_DOC_FOLDER_ID,
+      googleTrackerSpreadsheetId: env.AGENT_GOOGLE_TRACKER_SPREADSHEET_ID,
+      preMeetingWindowMinutes: env.AGENT_PRE_MEETING_WINDOW_MINUTES,
+      postMeetingLookbackMinutes: env.AGENT_POST_MEETING_LOOKBACK_MINUTES,
+    },
     fireworks,
     oauth,
     serviceAccount,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { runPreMeetingAgent } from "@/lib/agent";
 import { getAppConfig } from "@/lib/config";
-import { runMorningBriefing } from "@/lib/briefing";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("dryRun")?.toLowerCase() === "true";
 
   try {
-    const result = await runMorningBriefing({
+    const result = await runPreMeetingAgent({
       targetDate,
       dryRun,
     });
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unexpected briefing error";
+      error instanceof Error ? error.message : "Unexpected pre-meeting agent error";
 
     return NextResponse.json(
       {

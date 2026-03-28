@@ -6,6 +6,7 @@ import {
   parseTelegramTargetDate,
   processTelegramUpdate,
 } from "@/lib/telegram-assistant";
+import { ActionProposal, AgentTask, MeetingSnapshot } from "@/lib/types";
 import { eventContextFixture } from "@/tests/fixtures";
 
 const baseEnv = {
@@ -20,6 +21,51 @@ const baseEnv = {
   BRIEFING_RECIPIENT_EMAIL: "ops@example.com",
   TELEGRAM_BOT_TOKEN: "bot-token",
   TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+};
+
+const pendingTaskFixture: AgentTask = {
+  id: "task-1",
+  sourceMeetingId: eventContextFixture.eventId,
+  title: "Confirm board narrative owner",
+  detail: "Lock who owns the board narrative before the prep session.",
+  status: "pending",
+  priority: "high",
+  createdAt: "2026-03-24T21:00:00.000Z",
+  updatedAt: "2026-03-24T21:00:00.000Z",
+};
+
+const pendingProposalFixture: ActionProposal = {
+  id: "proposal-1",
+  kind: "send_email",
+  status: "pending",
+  sourceMeetingId: eventContextFixture.eventId,
+  targetDate: "2026-03-25",
+  title: "Send board recap draft",
+  summary: "Draft follow-up email for the board prep meeting.",
+  payload: {
+    to: ["alex@example.com"],
+    subject: "Board Prep Recap",
+    text: "Here is the recap.",
+    summary: "Email recap",
+  },
+  createdAt: "2026-03-24T21:00:00.000Z",
+  updatedAt: "2026-03-24T21:00:00.000Z",
+};
+
+const prepSnapshotFixture: MeetingSnapshot = {
+  id: "snapshot-1",
+  eventId: eventContextFixture.eventId,
+  localDate: "2026-03-25",
+  prepBrief: {
+    brief: "Prepare the board narrative and funding posture.",
+    agenda: ["Review board narrative", "Confirm funding posture"],
+    risks: ["Narrative still soft"],
+    decisionsToDrive: ["Lock the narrative owner"],
+    stakeholderSignals: ["Watch for confidence mismatch"],
+    confidence: "medium",
+  },
+  createdAt: "2026-03-24T21:00:00.000Z",
+  updatedAt: "2026-03-24T21:00:00.000Z",
 };
 
 test("parseTelegramTargetDate supports explicit dates", () => {
@@ -248,6 +294,84 @@ test("buildTelegramAssistantReply uses prior context for follow-up risk question
   }
 });
 
+test("buildTelegramAssistantReply lists open tasks for /tasks", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply("/tasks", {
+      listOpenAgentTasks: async () => [pendingTaskFixture],
+    });
+
+    assert.match(reply, /open agent task/i);
+    assert.match(reply, /Confirm board narrative owner/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("buildTelegramAssistantReply lists pending proposals for /followups", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply("/followups", {
+      listPendingActionProposals: async () => [pendingProposalFixture],
+    });
+
+    assert.match(reply, /pending proposal/i);
+    assert.match(reply, /proposal-1/);
+    assert.match(reply, /Send board recap draft/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("buildTelegramAssistantReply renders agenda details for /agenda", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply("/agenda Board Prep", {
+      priorContext: {
+        chatId: "8701359825",
+        lastTargetDate: "2026-03-25",
+        lastMeetingTitle: "Board Prep",
+      },
+      listEventContextsForDate: async () => [eventContextFixture],
+      listMeetingSnapshotsForDate: async () => [prepSnapshotFixture],
+      now: () => new Date("2026-03-24T21:00:00.000Z"),
+    });
+
+    assert.match(reply, /Agenda for Board Prep/);
+    assert.match(reply, /Review board narrative/);
+    assert.match(reply, /Decision: Lock the narrative owner/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
 test("processTelegramUpdate replies to incoming text messages", async () => {
   const originalEnv = process.env;
   const sent: Array<{
@@ -409,6 +533,57 @@ test("processTelegramUpdate preserves follow-up context across turns", async () 
     assert.equal(sent.length, 1);
     assert.doesNotMatch(sent[0] ?? "", /I don't see any meetings/);
     assert.equal(writtenContexts[0]?.lastTargetDate, "2026-03-31");
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("processTelegramUpdate can approve an agent proposal", async () => {
+  const originalEnv = process.env;
+  const sent: string[] = [];
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const result = await processTelegramUpdate(
+      {
+        update_id: 4,
+        message: {
+          message_id: 45,
+          text: "/approve proposal-1",
+          chat: {
+            id: 8701359825,
+            type: "private",
+          },
+        },
+      },
+      {
+        executeActionProposal: async () => ({
+          ...pendingProposalFixture,
+          status: "executed",
+          executedAt: "2026-03-24T21:05:00.000Z",
+        }),
+        readTelegramChatContext: async () => null,
+        writeTelegramChatContext: async () => {},
+        sendTelegramText: async ({ text }) => {
+          sent.push(text);
+        },
+      },
+    );
+
+    assert.deepEqual(result, {
+      handled: true,
+      replied: true,
+    });
+    assert.equal(sent.length, 1);
+    assert.match(sent[0] ?? "", /Approved and executed/);
+    assert.match(sent[0] ?? "", /proposal-1/);
   } finally {
     process.env = originalEnv;
     resetAppConfigForTests();

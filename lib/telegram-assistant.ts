@@ -1,7 +1,17 @@
+import {
+  executeActionProposal,
+  rejectActionProposal,
+} from "@/lib/agent-executor";
+import {
+  listMeetingSnapshotsForDate,
+  listOpenAgentTasks,
+  listPendingActionProposals,
+} from "@/lib/agent-store";
 import { getAppConfig } from "@/lib/config";
 import { buildDeterministicDigest } from "@/lib/digest";
 import { createFireworksChatCompletion } from "@/lib/fireworks";
 import { listEventContextsForDate } from "@/lib/google-workspace";
+import { buildBriefingPayload } from "@/lib/synthesis";
 import {
   readTelegramChatContext,
   TelegramChatContext,
@@ -14,7 +24,13 @@ import {
   getLocalDateString,
 } from "@/lib/time";
 import { sendTelegramText, TelegramUpdate } from "@/lib/telegram";
-import { EventContext } from "@/lib/types";
+import {
+  ActionProposal,
+  AgentTask,
+  BriefingPayload,
+  EventContext,
+  MeetingSnapshot,
+} from "@/lib/types";
 
 const TELEGRAM_ASSISTANT_ATTACHMENT_LIMIT = 2;
 const TELEGRAM_ASSISTANT_ATTACHMENT_TEXT_LIMIT = 900;
@@ -115,6 +131,12 @@ type TelegramAssistantDependencies = {
     options: Parameters<typeof createFireworksChatCompletion>[0],
   ) => Promise<string>;
   listEventContextsForDate?: (localDate: string) => Promise<EventContext[]>;
+  buildBriefingPayload?: typeof buildBriefingPayload;
+  listMeetingSnapshotsForDate?: (localDate: string) => Promise<MeetingSnapshot[]>;
+  listOpenAgentTasks?: (limit?: number) => Promise<AgentTask[]>;
+  listPendingActionProposals?: (limit?: number) => Promise<ActionProposal[]>;
+  executeActionProposal?: (proposalId: string) => Promise<ActionProposal | null>;
+  rejectActionProposal?: (proposalId: string) => Promise<ActionProposal | null>;
   now?: () => Date;
   sendTelegramText?: typeof sendTelegramText;
   readTelegramChatContext?: (
@@ -654,6 +676,461 @@ function buildMeetingDetailsReply(
   return lines.join("\n");
 }
 
+function buildBriefReply(payload: BriefingPayload) {
+  return [
+    payload.executiveSummary,
+    "",
+    "Key points:",
+    ...payload.topActions.slice(0, 5).map((item) => `- ${item}`),
+  ].join("\n");
+}
+
+function buildTasksReply(tasks: AgentTask[]) {
+  if (tasks.length === 0) {
+    return [
+      "No open agent tasks right now.",
+      "",
+      "Key points:",
+      "- When pre- or post-meeting planning creates follow-ups, they will show up here.",
+    ].join("\n");
+  }
+
+  return [
+    `You have ${tasks.length} open agent task${tasks.length === 1 ? "" : "s"}.`,
+    "",
+    "Key points:",
+    ...tasks.map((task) => {
+      const due = task.dueDate ? `, due ${task.dueDate}` : "";
+      const owner = task.owner ? `, owner ${task.owner}` : "";
+      return `- ${task.title} [${task.priority}]${owner}${due}`;
+    }),
+  ].join("\n");
+}
+
+function buildFollowupsReply(proposals: ActionProposal[]) {
+  if (proposals.length === 0) {
+    return [
+      "No pending proposals right now.",
+      "",
+      "Key points:",
+      "- Approved actions will disappear from this list after they execute.",
+    ].join("\n");
+  }
+
+  return [
+    `You have ${proposals.length} pending proposal${proposals.length === 1 ? "" : "s"}.`,
+    "",
+    "Key points:",
+    ...proposals.map(
+      (proposal) => `- ${proposal.id}: ${proposal.title} (${proposal.kind})`,
+    ),
+    "- Use /approve <proposal_id> or /reject <proposal_id>.",
+  ].join("\n");
+}
+
+function buildProposalExecutionReply(
+  action: "approved" | "rejected",
+  proposal: ActionProposal | null,
+  proposalId: string,
+) {
+  const title = proposal?.title ?? proposalId;
+  const kind = proposal?.kind ?? "proposal";
+
+  return [
+    `${action === "approved" ? "Approved and executed" : "Rejected"}: ${title}.`,
+    "",
+    "Key points:",
+    `- ID: ${proposalId}`,
+    `- Kind: ${kind}`,
+    `- Status: ${proposal?.status ?? (action === "approved" ? "executed" : "rejected")}`,
+  ].join("\n");
+}
+
+function buildAgentErrorReply(prefix: string, error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown agent error";
+
+  return [
+    prefix,
+    "",
+    "Key points:",
+    `- ${message}`,
+  ].join("\n");
+}
+
+function buildAgendaOverviewReply(
+  targetDate: string,
+  timezone: string,
+  meetingContexts: EventContext[],
+  snapshots: MeetingSnapshot[],
+) {
+  const displayDate = formatDisplayDate(targetDate, timezone);
+
+  return [
+    `Agenda view for ${displayDate}.`,
+    "",
+    "Key points:",
+    ...meetingContexts.slice(0, 5).map((meeting) => {
+      const snapshot = snapshots.find((item) => item.eventId === meeting.eventId);
+      const descriptionLine = compactText(meeting.description).slice(0, 120);
+      const agendaLine =
+        snapshot?.prepBrief?.agenda[0] ??
+        snapshot?.followupBrief?.recapPoints[0] ??
+        (descriptionLine || "No agenda details are available yet.");
+
+      return `- ${meeting.title} (${formatLocalDateTime(meeting.start, timezone)}): ${agendaLine}`;
+    }),
+  ].join("\n");
+}
+
+function buildAgendaMeetingReply(
+  timezone: string,
+  meeting: EventContext,
+  snapshot: MeetingSnapshot | null,
+) {
+  const lines = [
+    `Agenda for ${meeting.title}:`,
+    "",
+    "Key points:",
+    `- Time: ${formatLocalDateTime(meeting.start, timezone)} to ${formatLocalDateTime(
+      meeting.end,
+      timezone,
+    )}`,
+    `- Location: ${meeting.location ?? "No location listed."}`,
+  ];
+
+  if (snapshot?.prepBrief) {
+    lines.push(
+      ...snapshot.prepBrief.agenda.slice(0, 3).map((item) => `- ${item}`),
+      ...snapshot.prepBrief.decisionsToDrive
+        .slice(0, 2)
+        .map((item) => `- Decision: ${item}`),
+    );
+  } else {
+    lines.push(
+      `- Context: ${
+        compactText(meeting.description) || "No agenda snapshot is stored for this meeting yet."
+      }`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function extractCommandArgument(text: string) {
+  const trimmed = text.trim();
+  const firstSpace = trimmed.indexOf(" ");
+
+  if (firstSpace === -1) {
+    return "";
+  }
+
+  return trimmed.slice(firstSpace + 1).trim();
+}
+
+function looksLikeDateQuery(
+  argument: string,
+  timezone: string,
+  now: Date,
+  priorContext: TelegramChatContext | null,
+) {
+  const lower = argument.toLowerCase();
+
+  if (
+    /\b(today|tomorrow|yesterday|day after tomorrow)\b/i.test(argument) ||
+    /\b\d{4}-\d{2}-\d{2}\b/.test(argument) ||
+    Boolean(parseMonthNameDate(argument, timezone, now)) ||
+    Boolean(parseSlashDate(argument, timezone, now)) ||
+    Boolean(parseWeekdayDate(argument, timezone, now))
+  ) {
+    return true;
+  }
+
+  if (!argument && priorContext?.lastTargetDate) {
+    return true;
+  }
+
+  return lower === "today" || lower === "tomorrow";
+}
+
+async function buildCommandTurn(
+  text: string,
+  targetDate: string,
+  priorContext: TelegramChatContext | null,
+  dependencies: TelegramAssistantDependencies,
+) {
+  const config = getAppConfig();
+  const command = text.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  const argument = extractCommandArgument(text);
+  const now = dependencies.now?.() ?? new Date();
+
+  if (command === "/start") {
+    return {
+      text: [
+        "I can answer questions about your meetings and run approval-gated agent actions.",
+        "",
+        "Try messages like:",
+        "- What are my meetings next Wednesday?",
+        `- Summarize my ${targetDate} meetings in plain English.`,
+        "- /tasks",
+        "- /followups",
+      ].join("\n"),
+      contextUpdate: {
+        lastTargetDate: targetDate,
+        lastQuestion: text,
+        lastIntent: "command",
+      },
+    } satisfies TelegramAssistantTurn;
+  }
+
+  if (command === "/help") {
+    return {
+      text: [
+        "Ask me about your meetings using natural language, or use the agent commands below.",
+        "",
+        "Commands:",
+        "- /tasks",
+        "- /followups",
+        "- /approve <proposal_id>",
+        "- /reject <proposal_id>",
+        "- /brief <date>",
+        "- /agenda <meeting title or date>",
+      ].join("\n"),
+      contextUpdate: {
+        lastTargetDate: targetDate,
+        lastQuestion: text,
+        lastIntent: "command",
+      },
+    } satisfies TelegramAssistantTurn;
+  }
+
+  if (command === "/tasks") {
+    const tasks = await (dependencies.listOpenAgentTasks ?? listOpenAgentTasks)(10);
+    return {
+      text: buildTasksReply(tasks),
+      contextUpdate: {
+        lastTargetDate: priorContext?.lastTargetDate ?? targetDate,
+        lastQuestion: text,
+        lastIntent: "agent_tasks",
+        lastMeetingTitle: priorContext?.lastMeetingTitle,
+      },
+    } satisfies TelegramAssistantTurn;
+  }
+
+  if (command === "/followups") {
+    const proposals = await (
+      dependencies.listPendingActionProposals ?? listPendingActionProposals
+    )(10);
+    return {
+      text: buildFollowupsReply(proposals),
+      contextUpdate: {
+        lastTargetDate: priorContext?.lastTargetDate ?? targetDate,
+        lastQuestion: text,
+        lastIntent: "agent_followups",
+        lastMeetingTitle: priorContext?.lastMeetingTitle,
+      },
+    } satisfies TelegramAssistantTurn;
+  }
+
+  if (command === "/approve") {
+    if (!argument) {
+      return {
+        text: "Usage: /approve <proposal_id>",
+        contextUpdate: {
+          lastQuestion: text,
+          lastIntent: "agent_approve_usage",
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+
+    try {
+      const proposal = await (
+        dependencies.executeActionProposal ?? executeActionProposal
+      )(argument);
+      return {
+        text: buildProposalExecutionReply("approved", proposal, argument),
+        contextUpdate: {
+          lastTargetDate: proposal?.targetDate ?? priorContext?.lastTargetDate,
+          lastQuestion: text,
+          lastIntent: "agent_approved",
+          lastMeetingTitle: priorContext?.lastMeetingTitle,
+        },
+      } satisfies TelegramAssistantTurn;
+    } catch (error) {
+      return {
+        text: buildAgentErrorReply(`I couldn't approve ${argument}.`, error),
+        contextUpdate: {
+          lastQuestion: text,
+          lastIntent: "agent_approve_error",
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+  }
+
+  if (command === "/reject") {
+    if (!argument) {
+      return {
+        text: "Usage: /reject <proposal_id>",
+        contextUpdate: {
+          lastQuestion: text,
+          lastIntent: "agent_reject_usage",
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+
+    try {
+      const proposal = await (
+        dependencies.rejectActionProposal ?? rejectActionProposal
+      )(argument);
+      return {
+        text: buildProposalExecutionReply("rejected", proposal, argument),
+        contextUpdate: {
+          lastTargetDate: proposal?.targetDate ?? priorContext?.lastTargetDate,
+          lastQuestion: text,
+          lastIntent: "agent_rejected",
+          lastMeetingTitle: priorContext?.lastMeetingTitle,
+        },
+      } satisfies TelegramAssistantTurn;
+    } catch (error) {
+      return {
+        text: buildAgentErrorReply(`I couldn't reject ${argument}.`, error),
+        contextUpdate: {
+          lastQuestion: text,
+          lastIntent: "agent_reject_error",
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+  }
+
+  if (command === "/brief") {
+    const requestedDate = argument || priorContext?.lastTargetDate || "today";
+    const briefDate = resolveTargetDateFromQuestion(
+      requestedDate,
+      config.timezone,
+      now,
+      priorContext,
+    );
+    const meetingContexts = await (
+      dependencies.listEventContextsForDate ?? listEventContextsForDate
+    )(briefDate);
+
+    if (meetingContexts.length === 0) {
+      return {
+        text: buildNoMeetingsReply(briefDate, config.timezone),
+        contextUpdate: {
+          lastTargetDate: briefDate,
+          lastQuestion: text,
+          lastIntent: "agent_brief",
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+
+    const { payload } = await (
+      dependencies.buildBriefingPayload ?? buildBriefingPayload
+    )(briefDate, meetingContexts);
+
+    return {
+      text: buildBriefReply(payload),
+      contextUpdate: {
+        lastTargetDate: briefDate,
+        lastQuestion: text,
+        lastIntent: "agent_brief",
+      },
+    } satisfies TelegramAssistantTurn;
+  }
+
+  if (command === "/agenda") {
+    const requested = argument || priorContext?.lastMeetingTitle || priorContext?.lastTargetDate || "today";
+    const treatAsDate = looksLikeDateQuery(requested, config.timezone, now, priorContext);
+
+    if (treatAsDate) {
+      const agendaDate = resolveTargetDateFromQuestion(
+        requested,
+        config.timezone,
+        now,
+        priorContext,
+      );
+      const meetingContexts = await (
+        dependencies.listEventContextsForDate ?? listEventContextsForDate
+      )(agendaDate);
+
+      if (meetingContexts.length === 0) {
+        return {
+          text: buildNoMeetingsReply(agendaDate, config.timezone),
+          contextUpdate: {
+            lastTargetDate: agendaDate,
+            lastQuestion: text,
+            lastIntent: "agent_agenda",
+          },
+        } satisfies TelegramAssistantTurn;
+      }
+
+      const snapshots = await (
+        dependencies.listMeetingSnapshotsForDate ?? listMeetingSnapshotsForDate
+      )(agendaDate);
+
+      return {
+        text: buildAgendaOverviewReply(
+          agendaDate,
+          config.timezone,
+          meetingContexts,
+          snapshots,
+        ),
+        contextUpdate: {
+          lastTargetDate: agendaDate,
+          lastQuestion: text,
+          lastIntent: "agent_agenda",
+          lastMeetingTitle: priorContext?.lastMeetingTitle,
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+
+    const agendaDate = priorContext?.lastTargetDate ?? targetDate;
+    const meetingContexts = await (
+      dependencies.listEventContextsForDate ?? listEventContextsForDate
+    )(agendaDate);
+    const referencedMeeting = findReferencedMeeting(
+      requested,
+      meetingContexts,
+      priorContext,
+    );
+
+    if (!referencedMeeting) {
+      return {
+        text: [
+          "I couldn't find that meeting in the current context.",
+          "",
+          "Key points:",
+          "- Try /agenda 2026-03-31 for the day's agenda.",
+          "- Or mention the meeting title after asking about that date first.",
+        ].join("\n"),
+        contextUpdate: {
+          lastTargetDate: agendaDate,
+          lastQuestion: text,
+          lastIntent: "agent_agenda_missing",
+        },
+      } satisfies TelegramAssistantTurn;
+    }
+
+    const snapshots = await (
+      dependencies.listMeetingSnapshotsForDate ?? listMeetingSnapshotsForDate
+    )(agendaDate);
+    const snapshot =
+      snapshots.find((item) => item.eventId === referencedMeeting.eventId) ?? null;
+
+    return {
+      text: buildAgendaMeetingReply(config.timezone, referencedMeeting, snapshot),
+      contextUpdate: {
+        lastTargetDate: agendaDate,
+        lastQuestion: text,
+        lastIntent: "agent_agenda",
+        lastMeetingTitle: referencedMeeting.title,
+      },
+    } satisfies TelegramAssistantTurn;
+  }
+
+  return null;
+}
+
 function buildDeterministicAssistantReply(
   question: string,
   targetDate: string,
@@ -722,41 +1199,6 @@ function buildDeterministicAssistantReply(
   ].join("\n");
 }
 
-function buildCommandReply(text: string, targetDate: string, timezone: string) {
-  const lower = text.trim().toLowerCase();
-
-  if (lower.startsWith("/start")) {
-    return [
-      "I can answer questions about your meetings and related prep.",
-      "",
-      "Try messages like:",
-      "- What are my meetings next Wednesday?",
-      `- Summarize my ${targetDate} meetings in plain English.`,
-      "- Who is in the Board Prep meeting?",
-      "- What should I do before each meeting tomorrow?",
-    ].join("\n");
-  }
-
-  if (lower.startsWith("/help")) {
-    return [
-      "Ask me about your meetings using natural language.",
-      "",
-      "Supported patterns:",
-      "- month-name dates like April 1, 2026",
-      "- relative dates like today, tomorrow, next Wednesday",
-      "- schedules, attendees, risks, prep, and specific meetings",
-      "",
-      "Examples:",
-      "- What are my meetings for April 1, 2026?",
-      "- Who is in the Board Prep meeting?",
-      "- What could slip if these meetings go badly?",
-      "- Tell me about my last meeting tomorrow.",
-    ].join("\n");
-  }
-
-  return null;
-}
-
 function buildContextUpdate(
   question: string,
   targetDate: string,
@@ -785,17 +1227,15 @@ async function buildTelegramAssistantTurn(
     now(),
     priorContext,
   );
-  const commandReply = buildCommandReply(sanitizedQuestion, targetDate, config.timezone);
+  const commandTurn = await buildCommandTurn(
+    sanitizedQuestion,
+    targetDate,
+    priorContext,
+    dependencies,
+  );
 
-  if (commandReply) {
-    return {
-      text: commandReply,
-      contextUpdate: {
-        lastTargetDate: targetDate,
-        lastQuestion: sanitizedQuestion,
-        lastIntent: "command",
-      },
-    };
+  if (commandTurn) {
+    return commandTurn;
   }
 
   if (!isMeetingRelatedQuestion(sanitizedQuestion, priorContext, config.timezone, now())) {
