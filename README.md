@@ -15,7 +15,7 @@ Next.js app that generates a morning briefing digest from Google Calendar + Driv
 ## Setup
 
 1. Copy `.env.example` to `.env.local`
-2. Fill in the Google values
+2. Fill in the Google OAuth values plus `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 3. Choose synthesis mode with `BRIEFING_SYNTHESIS_MODE=deterministic` or `fireworks`
 4. If Fireworks is enabled, fill in `FIREWORKS_API_KEY` and optionally override `FIREWORKS_MODEL`
 5. Choose delivery channels with `BRIEFING_DELIVERY_CHANNELS=email`, `telegram`, or `email,telegram`
@@ -52,8 +52,31 @@ Optional query params:
 
 - The included `csiworkspace-52b8a0e998e2.json` file is treated as a local secret and is ignored by `.gitignore`.
 - OAuth mode is the recommended default for personal Google accounts.
+- OAuth tokens are stored in Supabase in production-oriented setups; `GOOGLE_OAUTH_TOKENS_FILE` is only used for one-time migration from an existing local token file.
 - Service account mode is still available for Workspace/domain setups.
 - Fireworks synthesis is optional; when it fails, the app falls back to the deterministic digest.
 - Telegram delivery uses the standard Bot API and a single configured chat ID in v1.
 - Inbound Telegram replies use a webhook path secret; register the webhook after deployment with:
   `curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<PUBLIC_BASE_URL>/api/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>"`
+
+## Supabase OAuth Migration
+
+Create this table in Supabase:
+
+```sql
+create table if not exists public.google_oauth_tokens (
+  storage_key text primary key,
+  user_email text,
+  tokens jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.google_oauth_tokens enable row level security;
+```
+
+Then migrate the existing local OAuth token file once with:
+
+```bash
+npm run migrate:google-oauth:supabase
+```

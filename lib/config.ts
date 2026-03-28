@@ -13,6 +13,8 @@ const EnvSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().url().optional(),
   GOOGLE_OAUTH_TOKENS_FILE: z.string().default("./.google-oauth-tokens.json"),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   GOOGLE_SERVICE_ACCOUNT_FILE: z.string().optional(),
   GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: z.string().optional(),
@@ -49,7 +51,9 @@ type GoogleOAuthConfig = {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-  tokensFile: string;
+  legacyTokensFile: string;
+  supabaseUrl: string;
+  supabaseServiceRoleKey: string;
 };
 
 export type AppConfig = {
@@ -172,6 +176,8 @@ export function getConfigStatus() {
           "GOOGLE_OAUTH_CLIENT_ID",
           "GOOGLE_OAUTH_CLIENT_SECRET",
           "GOOGLE_OAUTH_REDIRECT_URI",
+          "SUPABASE_URL",
+          "SUPABASE_SERVICE_ROLE_KEY",
         ]
       : [
           "CRON_SECRET",
@@ -228,7 +234,20 @@ export function getAppConfig() {
             (() => {
               throw new Error("Missing GOOGLE_OAUTH_REDIRECT_URI.");
             })(),
-          tokensFile: path.resolve(process.cwd(), env.GOOGLE_OAUTH_TOKENS_FILE),
+          legacyTokensFile: path.resolve(
+            process.cwd(),
+            env.GOOGLE_OAUTH_TOKENS_FILE,
+          ),
+          supabaseUrl:
+            env.SUPABASE_URL ??
+            (() => {
+              throw new Error("Missing SUPABASE_URL.");
+            })(),
+          supabaseServiceRoleKey:
+            env.SUPABASE_SERVICE_ROLE_KEY ??
+            (() => {
+              throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY.");
+            })(),
         }
       : undefined;
   const googleDelegatedUser =

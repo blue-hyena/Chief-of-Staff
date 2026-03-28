@@ -1,8 +1,13 @@
-import fs from "node:fs";
-import path from "node:path";
 import { google } from "googleapis";
 import { Credentials } from "google-auth-library";
 import { getAppConfig } from "@/lib/config";
+import {
+  GOOGLE_OAUTH_STORAGE_KEY,
+  GOOGLE_OAUTH_TOKENS_TABLE,
+  readStoredGoogleOAuth as readStoredOAuthFromStore,
+  writeStoredGoogleOAuth as writeStoredOAuthToStore,
+  type StoredGoogleOAuth,
+} from "@/lib/google-oauth-store";
 
 const OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/calendar",
@@ -11,11 +16,6 @@ const OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
-
-type StoredGoogleOAuth = {
-  tokens: Credentials;
-  userEmail?: string;
-};
 
 function ensureOAuthConfig() {
   const config = getAppConfig();
@@ -36,21 +36,23 @@ function getOAuthClient() {
   );
 }
 
-function readStoredOAuth() {
-  const oauth = ensureOAuthConfig();
+type GoogleOAuthStore = {
+  readStoredOAuth: () => Promise<StoredGoogleOAuth | null>;
+  writeStoredOAuth: (payload: StoredGoogleOAuth) => Promise<void>;
+};
 
-  if (!fs.existsSync(oauth.tokensFile)) {
-    return null;
-  }
+type GoogleOAuthExchangeDependencies = Partial<GoogleOAuthStore> & {
+  exchangeCode?: (
+    client: ReturnType<typeof getOAuthClient>,
+    code: string,
+  ) => Promise<Credentials>;
+  getUserEmail?: (client: ReturnType<typeof getOAuthClient>) => Promise<string | null>;
+};
 
-  const raw = fs.readFileSync(oauth.tokensFile, "utf8");
-  return JSON.parse(raw) as StoredGoogleOAuth;
-}
-
-function writeStoredOAuth(payload: StoredGoogleOAuth) {
-  const oauth = ensureOAuthConfig();
-  fs.writeFileSync(oauth.tokensFile, JSON.stringify(payload, null, 2));
-}
+const defaultGoogleOAuthStore: GoogleOAuthStore = {
+  readStoredOAuth: readStoredOAuthFromStore,
+  writeStoredOAuth: writeStoredOAuthToStore,
+};
 
 export function getGoogleAuthorizationUrl() {
   const client = getOAuthClient();
@@ -62,7 +64,9 @@ export function getGoogleAuthorizationUrl() {
   });
 }
 
-export function getGoogleOAuthStatus() {
+export async function getGoogleOAuthStatus(
+  dependencies: Partial<GoogleOAuthStore> = {},
+) {
   const config = getAppConfig();
 
   if (config.googleAuthMode !== "oauth") {
@@ -70,41 +74,65 @@ export function getGoogleOAuthStatus() {
       mode: config.googleAuthMode,
       authorized: false,
       tokensFile: null,
+      tokenStore: null,
       userEmail: null,
     };
   }
 
-  const stored = readStoredOAuth();
+  const store = {
+    ...defaultGoogleOAuthStore,
+    ...dependencies,
+  };
+  const stored = await store.readStoredOAuth();
 
   return {
     mode: config.googleAuthMode,
     authorized: Boolean(stored?.tokens?.refresh_token || stored?.tokens?.access_token),
-    tokensFile: path.relative(process.cwd(), config.oauth!.tokensFile),
+    tokensFile: null,
+    tokenStore: `${GOOGLE_OAUTH_TOKENS_TABLE}/${GOOGLE_OAUTH_STORAGE_KEY}`,
     userEmail: stored?.userEmail ?? null,
   };
 }
 
-export async function exchangeGoogleCode(code: string) {
+export async function exchangeGoogleCode(
+  code: string,
+  dependencies: GoogleOAuthExchangeDependencies = {},
+) {
   const client = getOAuthClient();
-  const { tokens } = await client.getToken(code);
+  const tokens = dependencies.exchangeCode
+    ? await dependencies.exchangeCode(client, code)
+    : (await client.getToken(code)).tokens;
 
   client.setCredentials(tokens);
 
-  const oauth2 = google.oauth2({ version: "v2", auth: client });
-  const user = await oauth2.userinfo.get();
+  const userEmail = dependencies.getUserEmail
+    ? await dependencies.getUserEmail(client)
+    : (
+        await google.oauth2({ version: "v2", auth: client }).userinfo.get()
+      ).data.email ?? null;
+  const store = {
+    ...defaultGoogleOAuthStore,
+    ...dependencies,
+  };
 
-  writeStoredOAuth({
+  await store.writeStoredOAuth({
     tokens,
-    userEmail: user.data.email ?? undefined,
+    userEmail: userEmail ?? undefined,
   });
 
   return {
-    userEmail: user.data.email ?? null,
+    userEmail,
   };
 }
 
-export async function getOAuthAuthorizedClient() {
-  const stored = readStoredOAuth();
+export async function getOAuthAuthorizedClient(
+  dependencies: Partial<GoogleOAuthStore> = {},
+) {
+  const store = {
+    ...defaultGoogleOAuthStore,
+    ...dependencies,
+  };
+  const stored = await store.readStoredOAuth();
 
   if (!stored?.tokens) {
     throw new Error(

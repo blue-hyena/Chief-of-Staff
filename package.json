@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "migrate:google-oauth:supabase": "node --import tsx scripts/migrate-google-oauth-to-supabase.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.100.1",
     "googleapis": "^144.0.0",
     "next": "^15.0.0",
     "pdf-parse": "^1.1.1",

@@ -15,6 +15,8 @@ const baseEnv = {
   GOOGLE_OAUTH_CLIENT_ID: "client-id",
   GOOGLE_OAUTH_CLIENT_SECRET: "client-secret",
   GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3000/api/auth/google/callback",
+  SUPABASE_URL: "https://project.supabase.co",
+  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
   BRIEFING_RECIPIENT_EMAIL: "ops@example.com",
   TELEGRAM_BOT_TOKEN: "bot-token",
   TELEGRAM_WEBHOOK_SECRET: "webhook-secret",

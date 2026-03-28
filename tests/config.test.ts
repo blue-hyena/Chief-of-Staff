@@ -9,6 +9,8 @@ const baseEnv = {
   GOOGLE_OAUTH_CLIENT_ID: "client-id",
   GOOGLE_OAUTH_CLIENT_SECRET: "client-secret",
   GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3000/api/auth/google/callback",
+  SUPABASE_URL: "https://project.supabase.co",
+  SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
   BRIEFING_RECIPIENT_EMAIL: "ops@example.com",
 };
 
@@ -96,6 +98,29 @@ test("getAppConfig rejects missing Fireworks API key when Fireworks synthesis is
       () => getAppConfig(),
       /Missing FIREWORKS_API_KEY while Fireworks synthesis is enabled/,
     );
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("getAppConfig rejects missing Supabase settings when OAuth mode is enabled", () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      APP_TIMEZONE: "Asia/Manila",
+      CRON_SECRET: "secret",
+      GOOGLE_AUTH_MODE: "oauth",
+      GOOGLE_OAUTH_CLIENT_ID: "client-id",
+      GOOGLE_OAUTH_CLIENT_SECRET: "client-secret",
+      GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3000/api/auth/google/callback",
+      BRIEFING_RECIPIENT_EMAIL: "ops@example.com",
+    };
+    resetAppConfigForTests();
+
+    assert.throws(() => getAppConfig(), /Missing SUPABASE_URL/);
   } finally {
     process.env = originalEnv;
     resetAppConfigForTests();
