@@ -49,6 +49,25 @@ test("parseTelegramTargetDate supports month-name and weekday dates", () => {
   );
 });
 
+test("parseTelegramTargetDate uses prior context for follow-up questions", () => {
+  const now = new Date("2026-03-27T15:00:00.000Z");
+
+  assert.equal(
+    parseTelegramTargetDate("What could slip if these meetings go badly?", "Asia/Manila", now, {
+      chatId: "8701359825",
+      lastTargetDate: "2026-03-31",
+    }),
+    "2026-03-31",
+  );
+  assert.equal(
+    parseTelegramTargetDate("What about the meetings tomorrow?", "Asia/Manila", now, {
+      chatId: "8701359825",
+      lastTargetDate: "2026-03-31",
+    }),
+    "2026-04-01",
+  );
+});
+
 test("parseTelegramTargetDate supports tomorrow and defaults to today", () => {
   const now = new Date("2026-03-27T15:00:00.000Z");
 
@@ -125,6 +144,29 @@ test("buildTelegramAssistantReply falls back when Fireworks fails", async () => 
   }
 });
 
+test("buildTelegramAssistantReply returns a non-meeting fallback for unrelated messages", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply("you are enough", {
+      now: () => new Date("2026-03-24T21:00:00.000Z"),
+    });
+
+    assert.match(reply, /Glad to help|I’m focused on your meetings/);
+    assert.doesNotMatch(reply, /I don't see any meetings/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
 test("buildTelegramAssistantReply answers schedule questions in deterministic mode", async () => {
   const originalEnv = process.env;
 
@@ -174,6 +216,38 @@ test("buildTelegramAssistantReply answers specific meeting attendee questions", 
   }
 });
 
+test("buildTelegramAssistantReply uses prior context for follow-up risk questions", async () => {
+  const originalEnv = process.env;
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const reply = await buildTelegramAssistantReply(
+      "What could slip if these meetings go badly?",
+      {
+        priorContext: {
+          chatId: "8701359825",
+          lastTargetDate: "2026-03-31",
+          lastIntent: "schedule",
+        },
+        listEventContextsForDate: async () => [eventContextFixture],
+        now: () => new Date("2026-03-24T21:00:00.000Z"),
+      },
+    );
+
+    assert.match(reply, /The biggest risks on/);
+    assert.doesNotMatch(reply, /I don't see any meetings/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
 test("processTelegramUpdate replies to incoming text messages", async () => {
   const originalEnv = process.env;
   const sent: Array<{
@@ -182,6 +256,7 @@ test("processTelegramUpdate replies to incoming text messages", async () => {
     text: string;
     replyToMessageId?: number;
   }> = [];
+  const writtenContexts: Array<Record<string, string | undefined>> = [];
 
   try {
     process.env = {
@@ -206,6 +281,15 @@ test("processTelegramUpdate replies to incoming text messages", async () => {
       {
         listEventContextsForDate: async () => [eventContextFixture],
         now: () => new Date("2026-03-24T21:00:00.000Z"),
+        readTelegramChatContext: async () => null,
+        writeTelegramChatContext: async (context) => {
+          writtenContexts.push({
+            chatId: context.chatId,
+            lastTargetDate: context.lastTargetDate,
+            lastIntent: context.lastIntent,
+            lastMeetingTitle: context.lastMeetingTitle,
+          });
+        },
         sendTelegramText: async (options) => {
           sent.push(options);
         },
@@ -220,6 +304,8 @@ test("processTelegramUpdate replies to incoming text messages", async () => {
     assert.equal(sent[0]?.chatId, 8701359825);
     assert.equal(sent[0]?.replyToMessageId, 42);
     assert.match(sent[0]?.text ?? "", /Key points:/);
+    assert.equal(writtenContexts.length, 1);
+    assert.equal(writtenContexts[0]?.chatId, "8701359825");
   } finally {
     process.env = originalEnv;
     resetAppConfigForTests();
@@ -250,6 +336,8 @@ test("processTelegramUpdate prompts for text when the message is unsupported", a
         },
       },
       {
+        readTelegramChatContext: async () => null,
+        writeTelegramChatContext: async () => {},
         sendTelegramText: async ({ text }) => {
           sent.push(text);
         },
@@ -262,6 +350,65 @@ test("processTelegramUpdate prompts for text when the message is unsupported", a
     });
     assert.equal(sent.length, 1);
     assert.match(sent[0] ?? "", /Send a text question about your meetings/);
+  } finally {
+    process.env = originalEnv;
+    resetAppConfigForTests();
+  }
+});
+
+test("processTelegramUpdate preserves follow-up context across turns", async () => {
+  const originalEnv = process.env;
+  const sent: string[] = [];
+  const writtenContexts: Array<Record<string, string | undefined>> = [];
+
+  try {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      BRIEFING_SYNTHESIS_MODE: "deterministic",
+    };
+    resetAppConfigForTests();
+
+    const result = await processTelegramUpdate(
+      {
+        update_id: 3,
+        message: {
+          message_id: 44,
+          text: "What could slip if these meetings go badly?",
+          chat: {
+            id: 8701359825,
+            type: "private",
+          },
+        },
+      },
+      {
+        listEventContextsForDate: async () => [eventContextFixture],
+        now: () => new Date("2026-03-24T21:00:00.000Z"),
+        readTelegramChatContext: async () => ({
+          chatId: "8701359825",
+          lastTargetDate: "2026-03-31",
+          lastIntent: "schedule",
+        }),
+        writeTelegramChatContext: async (context) => {
+          writtenContexts.push({
+            chatId: context.chatId,
+            lastTargetDate: context.lastTargetDate,
+            lastIntent: context.lastIntent,
+          });
+        },
+        sendTelegramText: async ({ text }) => {
+          sent.push(text);
+        },
+      },
+    );
+
+    assert.deepEqual(result, {
+      handled: true,
+      replied: true,
+    });
+    assert.equal(sent.length, 1);
+    assert.doesNotMatch(sent[0] ?? "", /I don't see any meetings/);
+    assert.equal(writtenContexts[0]?.lastTargetDate, "2026-03-31");
   } finally {
     process.env = originalEnv;
     resetAppConfigForTests();

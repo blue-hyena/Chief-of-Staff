@@ -58,6 +58,7 @@ Optional query params:
 - Telegram delivery uses the standard Bot API and a single configured chat ID in v1.
 - Inbound Telegram replies use a webhook path secret; register the webhook after deployment with:
   `curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<PUBLIC_BASE_URL>/api/telegram/webhook/<TELEGRAM_WEBHOOK_SECRET>"`
+- Telegram follow-up memory is stored in Supabase when `telegram_chat_context` exists; without that table the bot still works, but follow-up date and meeting references stay single-turn.
 
 ## Supabase OAuth Migration
 
@@ -79,4 +80,19 @@ Then migrate the existing local OAuth token file once with:
 
 ```bash
 npm run migrate:google-oauth:supabase
+```
+
+Create this table too if you want Telegram follow-up memory across messages:
+
+```sql
+create table if not exists public.telegram_chat_context (
+  chat_id text primary key,
+  last_target_date text,
+  last_question text,
+  last_intent text,
+  last_meeting_title text,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.telegram_chat_context enable row level security;
 ```
