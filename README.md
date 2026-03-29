@@ -54,6 +54,13 @@ Optional query params:
 
 `/api/google/workspace-test` uses the same `Authorization: Bearer <CRON_SECRET>` or `x-cron-secret` protection.
 
+## Vercel Schedule
+
+- `vercel.json` schedules `GET /api/cron/morning-briefing` once per day at `0 21 * * *` UTC.
+- With `APP_TIMEZONE=Asia/Manila`, that is `5:00 AM` Manila time the following day.
+- This schedule is for the production deployment on Vercel.
+- If you stay on the Hobby plan, Vercel cron jobs can only run once per day, so the `pre-meeting-agent` and `post-meeting-agent` routes still need to be triggered manually or by an external scheduler if you want more frequent automation.
+
 ## Notes
 
 - The included `csiworkspace-52b8a0e998e2.json` file is treated as a local secret and is ignored by `.gitignore`.
