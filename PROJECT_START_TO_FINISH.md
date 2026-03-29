@@ -1,797 +1,310 @@
 # Project Start-to-Finish Guide
 
-## Purpose of This Document
+## Purpose
 
-This document explains how this project was built from start to finish so another engineer can recreate the same type of system with minimal guesswork.
+This document explains what this project became, how it evolved, and how another engineer could rebuild the same system with fewer false starts.
 
 It covers:
 
-- the original product direction
-- the technical decisions that changed during implementation
-- the exact implementation sequence
-- the Google setup required
-- how the app works internally
-- how the test data was created
-- how email delivery was tested
-- the side work that was created to support the project, including local Codex skills
-
-This project ended as a deterministic Google Workspace briefing system. It does not use any external LLM at runtime.
-
----
+- the current final architecture
+- the major implementation phases
+- the key technical decisions
+- the storage and deployment model
+- the main runtime routes and modules
+- the current limitations
 
 ## 1. Final Project Definition
 
-The final project is a Next.js application that:
+The final system is a Next.js-based chief-of-staff assistant that:
 
-- reads a user’s Google Calendar for a target day
-- finds the attached or linked Google Drive documents for each meeting
-- extracts the text from those documents
-- builds a structured morning briefing
-- adds PM-style synthesis using deterministic rules
-- optionally sends that briefing by email through Gmail
+- reads Google Calendar events for a target date
+- gathers linked and attached Google Drive context
+- extracts text from Docs, Sheets, PDFs, and text files
+- builds a daily briefing with deterministic logic or Fireworks
+- sends that briefing through Gmail and/or Telegram
+- answers meeting questions in Telegram
+- stores memory and state in Supabase
+- drafts pre-meeting and post-meeting tasks, snapshots, and approval-gated actions
 
-The system is designed for a project manager who wants a daily morning brief generated from their real calendar and meeting materials.
+This is no longer just a deterministic email briefing app. It is now a small agentic system with durable state and a Telegram control surface.
 
----
+## 2. How the Project Evolved
 
-## 2. Original Direction vs Final Direction
+### Phase 1: Morning briefing foundation
 
-### Original direction
+The initial goal was a daily briefing generated from Google Calendar and meeting materials.
 
-The project initially assumed:
+This phase established:
 
-- Google Workspace data ingestion
-- external LLM summarization
-- email delivery
-
-The first plan referenced a third-party model provider.
-
-### Final direction
-
-The project was intentionally simplified and hardened:
-
-- no Fireworks API
-- no in-app OpenAI or other model provider
-- no runtime LLM dependency
-
-Instead, the system now uses:
-
-- deterministic document extraction
-- rules-based meeting summarization
-- rules-based PM synthesis
-- Gmail for final delivery
-
-This made the system easier to test, easier to operate, and less fragile.
-
----
-
-## 3. What Was Built
-
-The main functional pieces are:
-
-- Google authentication
-- Google Calendar integration
-- Google Drive integration
-- Google Docs and Sheets integration
-- text extraction for meeting documents
-- deterministic digest generation
-- PM-style synthesis generation
-- email rendering
-- email sending
-- testing utilities
-- local Codex skills for Google Workspace troubleshooting and reuse
-
----
-
-## 4. Core Files and Responsibilities
-
-These are the files that matter most:
-
-- [lib/briefing.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/briefing.ts)
-  - top-level orchestration for generating and optionally sending a morning briefing
-
-- [lib/digest.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/digest.ts)
-  - deterministic digest generation
-  - PM-style synthesis generation
-
-- [lib/email.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/email.ts)
-  - HTML and plain-text email rendering
-
-- [lib/google-workspace.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/google-workspace.ts)
-  - Google Calendar read/write
-  - Google Drive read/write
-  - Google Docs / Sheets related operations
-  - Gmail send
-
-- [lib/google-auth.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/google-auth.ts)
-  - Google OAuth flow and token management
-
-- [lib/types.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/types.ts)
-  - shared TypeScript types for meeting and briefing payloads
-
-- [app/api/cron/morning-briefing/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/cron/morning-briefing/route.ts)
-  - API route that runs the briefing job
-
-- [app/api/auth/google/start/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/start/route.ts)
-  - starts OAuth login
-
-- [app/api/auth/google/callback/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/callback/route.ts)
-  - handles OAuth callback
-
-- [app/api/auth/google/status/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/status/route.ts)
-  - shows whether Google OAuth has completed
-
-- [app/api/google/workspace-test/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/google/workspace-test/route.ts)
-  - live workspace test endpoint used to prove Drive and Docs/Sheets write access
-
-- [tests/email.test.ts](/Users/corally/Documents/codex/Workspace%20Manager/tests/email.test.ts)
-  - email rendering tests
-
----
-
-## 5. Prerequisites
-
-To recreate this project, the next person needs:
-
-- Node.js
-- npm
-- a Google Cloud project
-- a Google account that owns or can access the target Calendar and Drive data
-- permission to enable Google APIs in Google Cloud
-
-This project was built locally in a Next.js workspace.
-
----
-
-## 6. Initial Project Setup
-
-### Step 1: Create the app
-
-Set up a Next.js app with server-side API routes.
-
-Install the dependencies used in this project:
-
-- `next`
-- `react`
-- `react-dom`
-- `googleapis`
-- `pdf-parse`
-- `zod`
-- `tsx`
-- `typescript`
-
-### Step 2: Add scripts
-
-The project uses these script patterns:
-
-```json
-{
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts"
-  }
-}
-```
-
-### Step 3: Define env configuration
-
-Create `.env.example` and `.env.local`.
-
-Important runtime values include:
-
-- `GOOGLE_AUTH_MODE`
-- `GOOGLE_OAUTH_CLIENT_ID`
-- `GOOGLE_OAUTH_CLIENT_SECRET`
-- `GOOGLE_OAUTH_REDIRECT_URI`
-- `GOOGLE_OAUTH_TOKENS_FILE`
-- `CRON_SECRET`
-- `BRIEFING_RECIPIENT_EMAIL`
-- `GOOGLE_CALENDAR_ID`
-- `APP_TIMEZONE`
-
----
-
-## 7. First Attempt: Service Account
-
-### Why it was attempted
-
-The first instinct for a backend automation project is often a Google service account. That is reasonable for backend workflows where the service account owns the data or has delegated access.
-
-### What worked
-
-The service account was able to:
-
-- read some shared Drive metadata
-- inspect a shared folder
-
-### What failed
-
-The service account failed when trying to create Google Docs and Sheets in the user’s Drive context.
-
-This failure showed up as:
-
-- quota problems
-- ownership/context mismatch for native Google files
-
-### What this means for future recreations
-
-If the next person is building against a personal Google account or a normal user-owned Drive, do not assume a service account will be sufficient for write operations.
-
-Service account is only a good default if:
-
-- the data lives in a Shared Drive
-- or there is a proper Google Workspace delegated setup
-
-Otherwise, use user OAuth.
-
----
-
-## 8. Correct Authentication Strategy: User OAuth
-
-This project was successfully completed using Google user OAuth.
-
-### Why OAuth was required
-
-The app needed to act as the real Google user in order to:
-
-- create Google Docs
-- create Google Sheets
-- create Calendar events
-- send Gmail messages
-
-### Google Cloud setup steps
-
-To recreate this:
-
-1. Open Google Cloud Console.
-2. Open or create a Google Cloud project.
-3. Open Google Auth Platform.
-4. Configure the consent screen.
-5. Set user type to `External`.
-6. Add the real Google account as a test user if the app is still in testing mode.
-7. Create an OAuth 2.0 Client ID of type `Web application`.
-8. Add this redirect URI:
-
-```text
-http://localhost:3000/api/auth/google/callback
-```
-
-### APIs that must be enabled
-
-Enable these APIs:
-
-- Google Drive API
-- Google Docs API
-- Google Sheets API
-- Google Calendar API
-- Gmail API
-
-If Docs or Sheets API is not enabled, file creation will fail even if Drive access already works.
-
-### App-side OAuth setup
-
-The following pieces were built:
-
-- route to start Google login
-- route to handle callback
-- local token storage file
-- status endpoint to verify auth completion
-
-The implementation lives in:
-
-- [lib/google-auth.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/google-auth.ts)
-- [app/api/auth/google/start/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/start/route.ts)
-- [app/api/auth/google/callback/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/callback/route.ts)
-- [app/api/auth/google/status/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/status/route.ts)
-
-### OAuth scopes required
-
-This project needed scopes for:
-
-- Calendar read/write
-- Drive access
-- Gmail send
-- Sheets access
-
-If the next person changes scopes after initial login, the user must re-consent.
-
----
-
-## 9. Google Workspace Integration Layer
-
-Once auth was stable, the next step was to build the Google integration code.
-
-### Responsibilities handled in `lib/google-workspace.ts`
-
-This file is responsible for:
-
-- creating authenticated Google clients
-- reading events for a target day
-- normalizing attendees
-- finding attachments from event attachments and Drive links in descriptions
-- reading Drive file metadata
-- exporting Google Docs to text
-- reading Google Sheets cell ranges into text
-- downloading files such as PDFs
-- sending email through Gmail
-
-### Important design choice
-
-One file centralizes Google Workspace operations. This makes debugging much easier because all Drive, Calendar, Gmail, Docs, and Sheets logic is in one place.
-
----
-
-## 10. Document Extraction Strategy
-
-The system needed to turn meeting materials into text that could be used for a briefing.
-
-### Supported sources
-
-The extraction layer handles:
-
-- Google Docs
-- Google Sheets
-- PDFs
-
-### How extraction works
-
-- Google Docs are exported as plain text.
-- Google Sheets are read as bounded cell ranges and formatted into readable rows.
-- PDFs are downloaded and parsed into text.
-
-### Important constraint
-
-Extraction is intentionally bounded. This prevents huge documents from turning into unmanageable briefing payloads.
-
-### Why this matters
-
-Even without an LLM, the system still needs usable source text so the digest builder can reference real meeting context.
-
----
-
-## 11. Building the Briefing Pipeline
-
-The central execution flow is in [lib/briefing.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/briefing.ts).
-
-### Step-by-step runtime flow
-
-1. Receive a target date, or default to the current local date.
-2. Read all calendar events for that date.
-3. For each event:
-   - collect title
-   - collect start and end time
-   - collect attendees
-   - collect location
-   - collect description
-   - find attachments and Drive links
-4. Extract text from the source documents.
-5. Convert all gathered event context into a structured briefing payload.
-6. Add PM-style synthesis.
-7. If `dryRun` is false, render the email and send it through Gmail.
-
-### Why `dryRun` matters
-
-This project used `dryRun=true` extensively while testing so the full data flow could be verified without sending unwanted emails.
-
----
-
-## 12. Removing the LLM Dependency
-
-This is one of the most important architectural decisions in the project.
-
-### What changed
-
-The original plan assumed an AI summarization API. That was removed.
-
-### What replaced it
-
-The app now uses deterministic logic for:
-
-- executive summary
-- key meeting points
-- prep notes
-- risks
-- action items
-- PM synthesis
-
-### Why this was better for this project
-
-- fewer external dependencies
-- easier testing
-- easier reproduction
-- lower operational cost
-- more predictable outputs
-
-For a recreated project, this is a strong baseline even if an LLM is added later.
-
----
-
-## 13. Creating Live Test Assets in Google Drive
-
-After authentication was fixed, live workspace assets were created to validate the system.
-
-### Assets created
-
-- 10 sample Google Docs
-- 1 tracking Google Sheet
-
-### Purpose of the docs
-
-The docs were used to confirm:
-
-- Google Docs creation works
-- text extraction works
-- the app can handle multiple files in one workspace folder
-
-### Purpose of the tracker sheet
-
-The sheet was used to store:
-
-- document title
-- Google document ID
-- Google Docs link
-- metadata fields such as category, status, score, and timestamp
-
-### Why this matters for recreation
-
-A good way to validate the integration is:
-
-1. create several files
-2. create a tracker sheet
-3. store direct links in the sheet
-4. confirm the app can read those files back
-
-That proves the integration is not only authenticated but also operational.
-
----
-
-## 14. Creating Calendar Test Data
-
-To validate the real morning briefing flow, realistic project-manager meetings were created.
-
-### Date range used
-
-- March 30, 2026
-- March 31, 2026
-- April 1, 2026
-- April 2, 2026
-- April 3, 2026
-
-### Structure of the test schedule
-
-Each day had at least 3 meetings.
-
-Each meeting had:
-
-- a meaningful title
-- a scheduled time
-- attendees
-- description
-- location or meeting room
-- a Google Docs primer attached
-
-### Why this was done
-
-This step was critical because the system needed real calendar data with attached source material, not just isolated Drive documents.
-
-That made it possible to test the exact use case the project was supposed to solve.
-
----
-
-## 15. Deterministic Digest Generation
-
-The digest generation is implemented in [lib/digest.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/digest.ts).
-
-### What the digest includes
-
-Each generated briefing includes:
-
-- `executiveSummary`
-- `topActions`
-- per-meeting summaries
-- per-meeting key points
-- per-meeting prep notes
-- per-meeting risks
-- per-meeting action items
-- metadata notes
-
-### How it is built
-
-The digest uses:
-
-- event descriptions
-- attachment availability
-- extracted text counts
-- participant lists
-- location information
-
-It is intentionally deterministic rather than model-driven.
-
----
-
-## 16. PM-Style Synthesis Layer
-
-After the first digest worked, the briefing was extended with PM-style guidance.
-
-### Meeting-level synthesis
-
-Each meeting now includes:
-
-- `recommendedTalkingPoints`
-- `decisionsToDrive`
-- `stakeholderSignals`
-
-### Day-level synthesis
-
-Each full briefing now includes:
-
-- `dailyPriorities`
-- `crossMeetingRisks`
-- `stakeholderUpdateDraft`
-
-### How it works
-
-The app uses a rules-based meeting theme classifier based on:
-
-- event title
-- event description
-
-From that theme, it generates targeted PM guidance for meetings such as:
-
-- delivery planning
-- design review
-- stakeholder update
-- risk review
-- planning sessions
-
-### Why this matters
-
-This is what made the briefings operationally useful. The app stopped being only a calendar digest and became a project-manager prep tool.
-
----
-
-## 17. Email Rendering
-
-The email rendering is implemented in [lib/email.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/email.ts).
-
-### Output formats
-
-Two formats are produced:
-
-- HTML
-- plain text
-
-### Why both formats matter
-
-- HTML is useful for readable inbox presentation
-- text is useful for mail compatibility and debugging
-
-### What the email includes
-
-- date
-- executive summary
-- top actions
-- PM synthesis section
-- per-meeting summaries
-- per-meeting PM synthesis
-
----
-
-## 18. Sending the Email
-
-After dry-run verification, the app was tested with a real send through Gmail.
-
-### How this was performed
-
-The briefing function was executed with:
-
-- target date set explicitly
-- `dryRun: false`
-
-### Result
-
-The Gmail send succeeded and the system reported:
-
-- `ok: true`
-- `emailSent: true`
-
-This confirmed that the full path worked:
-
-- calendar read
-- file extraction
-- digest generation
-- PM synthesis
-- email rendering
+- Next.js API routes
+- Google Calendar reads
+- Drive-based attachment discovery
+- document text extraction
+- deterministic briefing generation
 - Gmail delivery
 
----
+### Phase 2: Telegram delivery
 
-## 19. Testing and Verification Sequence
+The project expanded from email-only delivery to multi-channel delivery.
 
-The project was validated in a deliberate order.
+This phase added:
 
-### Step-by-step validation order
+- Telegram bot token and chat ID configuration
+- a Telegram renderer for compact briefing output
+- delivery orchestration so email and Telegram could both be attempted independently
 
-1. Validate code structure locally.
-2. Run type checking.
-3. Run unit tests.
-4. Verify OAuth status.
-5. Verify Drive folder visibility.
-6. Verify Docs and Sheets creation.
-7. Verify Calendar event creation.
-8. Run a dry-run briefing for a real date.
-9. Inspect the payload.
-10. Refine digest rules.
-11. Send a real email.
+### Phase 3: Fireworks synthesis
 
-### Commands used regularly
+The system then moved from deterministic-only synthesis to optional LLM-assisted synthesis.
 
-```bash
-npm run dev
-npm run typecheck
-npm test
-npm run build
-```
+This phase added:
 
-### Why this validation order matters
+- Fireworks-based briefing synthesis
+- schema-constrained output validation
+- deterministic fallback on failure
 
-It isolates failures cleanly:
+### Phase 4: Inbound Telegram assistant
 
-- auth problems fail before file operations
-- file problems fail before digest generation
-- digest problems fail before email send
+The Telegram bot became interactive.
 
----
+This phase added:
 
-## 20. Known Implementation Lessons
+- webhook handling
+- meeting-aware Q&A
+- natural-language date parsing
+- short conversation memory
 
-These are the key lessons someone recreating the project should know.
+### Phase 5: Durable serverless storage
 
-### Lesson 1: Service accounts are not enough for this use case
+The early OAuth flow depended on local token files, which is not production-safe on Vercel.
 
-If the target is a normal user-owned Google account, use OAuth.
+This phase moved runtime state into Supabase:
 
-### Lesson 2: API enablement matters per product
+- Google OAuth tokens
+- Telegram chat context
 
-Drive access working does not mean Docs or Sheets will work.
+### Phase 6: Proactive agent layer
 
-### Lesson 3: Add test users for unverified apps
+The system grew from an assistant into a lightweight agent.
 
-If the OAuth app is in testing mode, only approved test users can log in.
+This phase added:
 
-### Lesson 4: Re-consent is required when scopes change
+- pre-meeting planning
+- post-meeting planning
+- Supabase-backed tasks
+- approval-gated proposals
+- Telegram commands for review and approval
 
-If you upgrade from Calendar read-only to Calendar write access, the user must authorize again.
+## 3. Final Architecture
 
-### Lesson 5: Realistic seed data is worth the effort
+### Frontend shell
 
-The project became much easier to validate once real meetings and real docs existed in Google Workspace.
+- [app/page.tsx](/Users/corally/Documents/codex/Workspace%20Manager/app/page.tsx)
 
----
+This is a lightweight status page. It is not the main user interface. The real interaction surface is Telegram plus API routes.
 
-## 21. Side Work: Local Codex Skills
+### Config and environment
 
-This project also produced a local skill pack to make future Google Workspace work easier.
+- [lib/config.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/config.ts)
+- [.env.example](/Users/corally/Documents/codex/Workspace%20Manager/.env.example)
 
-### Why the skill pack was created
+This layer parses all runtime configuration, including:
 
-Repeated Google setup and debugging steps were expensive to rediscover. To reduce that cost, a repo-local set of Codex skills was created.
+- Google OAuth
+- Supabase
+- Fireworks
+- Telegram
+- delivery channels
+- agent-specific options
 
-### Where the skills live
+### Google auth and workspace integration
 
-The pack was created under:
+- [lib/google-auth.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/google-auth.ts)
+- [lib/google-oauth-store.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/google-oauth-store.ts)
+- [lib/google-workspace.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/google-workspace.ts)
 
-- [skills](/Users/corally/Documents/codex/Workspace%20Manager/skills)
+This layer is responsible for:
 
-### What the skills cover
+- Google OAuth
+- reading/writing durable OAuth state in Supabase
+- Calendar reads
+- Drive metadata and file extraction
+- Gmail sends
+- Google Docs creation
+- Google Sheets updates
 
-The local skills include focused documentation for:
+### Synthesis layer
 
-- Google OAuth setup
-- localhost OAuth flow
-- unverified app test users
-- API enablement
-- Drive folder smoke tests
-- Docs and Sheets creation
-- sharing and permission issues
-- Calendar ingest debugging
-- Gmail send debugging
-- service account vs OAuth decision-making
-- localhost debugging
-- project-specific Google Workspace context
+- [lib/digest.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/digest.ts)
+- [lib/fireworks.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/fireworks.ts)
+- [lib/synthesis.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/synthesis.ts)
 
-### How the skills were created
+This layer selects between:
 
-The skill pack was created as repo-local Codex skills rather than global skills.
+- deterministic digest generation
+- Fireworks-based synthesis
 
-Each skill includes:
+It also preserves fallback behavior so the app still works when Fireworks is unavailable or returns malformed output.
 
-- `SKILL.md`
-- `agents/openai.yaml`
+### Delivery layer
 
-The skills were designed to be:
+- [lib/email.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/email.ts)
+- [lib/telegram.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/telegram.ts)
+- [lib/delivery.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/delivery.ts)
 
-- narrow
-- reusable
-- easier to trigger
-- useful outside this one project
+This layer handles:
 
-### Why they matter for recreation
+- HTML/plain-text email rendering
+- Telegram briefing rendering
+- per-channel delivery
+- partial-success behavior
 
-If the next person needs to build a similar Google Workspace automation project, the skill pack provides a starting library of known workflows and troubleshooting guides.
+### Telegram assistant layer
 
-### Important limitation
+- [lib/telegram-assistant.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/telegram-assistant.ts)
+- [lib/telegram-chat-context-store.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/telegram-chat-context-store.ts)
 
-These are repo-local skills. They are not automatically global Codex skills unless copied or mirrored into `~/.codex/skills`.
+This layer handles:
 
----
+- inbound Telegram webhook questions
+- date parsing
+- meeting Q&A
+- follow-up memory
+- Telegram command handling
 
-## 22. Suggested Recreation Order for the Next Engineer
+Current commands include:
 
-If someone wants to recreate this project from scratch, the cleanest order is:
+- `/tasks`
+- `/followups`
+- `/approve <proposal_id>`
+- `/reject <proposal_id>`
+- `/brief <date>`
+- `/agenda <meeting title or date>`
 
-1. Create the Next.js project.
-2. Add the Google client libraries and TypeScript setup.
-3. Build env configuration handling.
-4. Implement Google OAuth first.
-5. Add OAuth status and callback routes.
-6. Enable the required Google APIs.
-7. Build Drive and Calendar read access.
-8. Add Docs, Sheets, and Gmail support.
-9. Create a workspace test route.
-10. Prove that file creation works.
-11. Create realistic calendar events and meeting primers.
-12. Build deterministic digest generation.
-13. Add PM-style synthesis rules.
-14. Add email rendering.
-15. Test in dry-run mode.
-16. Send a real test email.
-17. Create local skills so future work is easier.
+### Agent layer
 
-This order minimizes wasted effort and avoids building the digest layer before the Google foundation is stable.
+- [lib/agent.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/agent.ts)
+- [lib/agent-planner.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/agent-planner.ts)
+- [lib/agent-executor.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/agent-executor.ts)
+- [lib/agent-store.ts](/Users/corally/Documents/codex/Workspace%20Manager/lib/agent-store.ts)
 
----
+This layer turns meetings into:
 
-## 23. Recommended Deliverables for a Recreated Version
+- prep snapshots
+- follow-up snapshots
+- tasks
+- approval-gated proposals
 
-If another person recreates this project, they should aim to produce:
+It also supports execution of approved proposals.
 
-- a working OAuth flow
-- a documented env contract
-- a workspace test route
-- a deterministic digest builder
-- a PM synthesis layer
-- email rendering in HTML and text
-- automated tests
-- realistic seed data in Google Calendar and Drive
-- a reconstruction guide like this one
-- a skill pack or troubleshooting notes
+## 4. Runtime Routes
 
----
+### OAuth
 
-## 24. Final Summary
+- [app/api/auth/google/start/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/start/route.ts)
+- [app/api/auth/google/callback/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/callback/route.ts)
+- [app/api/auth/google/status/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/auth/google/status/route.ts)
 
-This project was performed in the following real sequence:
+### System status
 
-1. define the product direction from the initial plan
-2. scaffold the Next.js app
-3. implement Google Workspace integration
-4. attempt service account auth
-5. discover service-account limitations for user-owned Docs/Sheets
-6. migrate to user OAuth
-7. enable the required Google APIs
-8. validate live Google access
-9. create sample Drive documents and a tracking sheet
-10. create realistic project-manager calendar events with primer docs
-11. build the deterministic morning briefing pipeline
-12. remove external LLM dependence completely
-13. add PM-style synthesis
-14. test the full flow with dry runs
-15. send a real email
-16. create a repo-local skill pack for future reuse
+- [app/api/health/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/health/route.ts)
 
-The final result is a working Google Workspace briefing system that is reproducible, testable, and understandable without relying on hidden context.
+### Morning briefing
 
+- [app/api/cron/morning-briefing/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/cron/morning-briefing/route.ts)
+
+### Agent planning
+
+- [app/api/cron/pre-meeting-agent/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/cron/pre-meeting-agent/route.ts)
+- [app/api/cron/post-meeting-agent/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/cron/post-meeting-agent/route.ts)
+
+### Telegram webhook
+
+- [app/api/telegram/webhook/[secret]/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/telegram/webhook/%5Bsecret%5D/route.ts)
+
+### Google workspace test helper
+
+- [app/api/google/workspace-test/route.ts](/Users/corally/Documents/codex/Workspace%20Manager/app/api/google/workspace-test/route.ts)
+
+## 5. Data and Storage Model
+
+The final system stores runtime state in Supabase.
+
+### Required durable tables
+
+- `google_oauth_tokens`
+- `telegram_chat_context`
+- `agent_tasks`
+- `action_proposals`
+- `meeting_snapshots`
+
+### Why this matters
+
+This is the main production hardening change. The app no longer depends on local filesystem token storage for deployed runtime behavior.
+
+## 6. Scheduling and Deployment
+
+The system is intended to run on Vercel.
+
+- [vercel.json](/Users/corally/Documents/codex/Workspace%20Manager/vercel.json)
+
+Current repo-level schedule:
+
+- morning briefing once per day via Vercel Cron
+
+The pre-meeting and post-meeting routes exist, but more frequent scheduling is constrained by the Vercel plan. On Hobby, those routes still need manual triggering or an external scheduler if you want more than one run per day.
+
+## 7. Key Technical Decisions
+
+### Use user OAuth, not service account, for primary runtime
+
+This project needs to act as the actual user for Gmail sends and Google-native file creation. Service account support still exists, but OAuth is the primary path.
+
+### Store runtime state in Supabase
+
+This removed the biggest serverless deployment weakness.
+
+### Keep deterministic fallback paths
+
+Fireworks improves quality, but the system should not fail closed when the model is unavailable or produces invalid output.
+
+### Keep agent actions approval-gated
+
+The project is intentionally not fully autonomous. It drafts tasks and actions, but the user approves execution.
+
+## 8. What the System Can Do Today
+
+- generate a daily morning briefing
+- deliver it to Gmail and Telegram
+- answer Telegram questions about meetings
+- remember short chat context
+- draft prep/follow-up tasks
+- draft follow-up proposals
+- execute approved proposals
+
+## 9. Current Gaps
+
+- manual task creation from Telegram is not implemented yet
+- follow-up understanding is stronger for meeting/date context than for abstract references like “those proposals”
+- pre/post-meeting scheduling is not fully automated under Hobby plan constraints
+- the bot is meeting-focused, not a general-purpose assistant
+
+## 10. Rebuild Checklist
+
+If another engineer wanted to recreate this project cleanly, the order should be:
+
+1. Set up Next.js app and typed config
+2. Implement Google OAuth
+3. Move token storage to Supabase immediately
+4. Build Google Calendar + Drive extraction
+5. Add deterministic briefing generation
+6. Add Gmail delivery
+7. Add Telegram delivery
+8. Add Fireworks synthesis with schema validation and fallback
+9. Add Telegram webhook and Q&A
+10. Add chat memory
+11. Add agent tasks/proposals/snapshots
+12. Add approval workflow
+13. Add Vercel cron schedule
+
+This order avoids the earlier dead end of relying on local runtime files for deployed auth state.
