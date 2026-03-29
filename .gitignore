@@ -9,5 +9,6 @@ coverage
 csiworkspace-*.json
 tsconfig.tsbuildinfo
 .google-oauth-tokens.json
+.DS_Store
 
 client_secret_*.json
