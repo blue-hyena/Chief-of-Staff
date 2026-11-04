@@ -1,6 +1,25 @@
 # AI Chief of Staff
 
-Next.js app that generates a morning briefing digest from Google Calendar + Drive context, can optionally use Fireworks for LLM synthesis, and can send the result through Gmail and Telegram. It also supports a Supabase-backed chief-of-staff agent that drafts prep/follow-up tasks, stores approval-gated actions, and exposes them through Telegram commands.
+A TypeScript and Next.js app that turns Google Calendar events and linked Drive documents into a daily briefing. I built it for my own workflow and cut my daily briefing prep from about 60 minutes to under 10 minutes.
+
+It delivers the briefing through Gmail or Telegram, answers meeting questions in Telegram, and drafts follow-up tasks. Actions such as creating a Google Doc or updating a tracker wait for approval.
+
+## Example briefing
+
+Illustrative example using fictional meetings and documents.
+
+> **09:00 · Launch readiness review**
+>
+> - **Context** · The launch checklist has one open item for support coverage.
+> - **Decision** · Confirm who owns escalation during launch week.
+> - **Follow-up** · Draft an update to the launch tracker once an owner is assigned.
+
+## How it works
+
+1. **Collect context.** Read the day's Calendar events and extract supported attachments and Drive links using Google OAuth.
+2. **Build the briefing.** Generate a rule-based digest. When Fireworks synthesis is enabled, validate its structured response with Zod. A timeout or invalid response falls back to the rule-based digest. See [synthesis](lib/synthesis.ts) and its [fallback test](tests/synthesis.test.ts).
+3. **Deliver or preview.** Send the briefing through Gmail, Telegram, or both. A dry run returns the payload with delivery disabled. Each channel reports its own result, so a successful send can be tracked even if another channel fails. See [delivery tests](tests/delivery.test.ts).
+4. **Queue proposed actions.** Store meeting snapshots, tasks, and action proposals in Supabase. For example, a proposed tracker update stays pending until it is approved in Telegram. See the [action executor](lib/agent-executor.ts).
 
 ## What It Does
 
@@ -63,7 +82,6 @@ Optional query params:
 
 ## Notes
 
-- The included `csiworkspace-52b8a0e998e2.json` file is treated as a local secret and is ignored by `.gitignore`.
 - OAuth mode is the recommended default for personal Google accounts.
 - OAuth tokens are stored in Supabase in production-oriented setups; `GOOGLE_OAUTH_TOKENS_FILE` is only used for one-time migration from an existing local token file.
 - Service account mode is still available for Workspace/domain setups.
